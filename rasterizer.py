@@ -23,7 +23,10 @@ class Triangle:
         self.average_depth = None
 
         # colour
-        self.colour = colour #(np.random.randint(255), np.random.randint(255), np.random.randint(255))
+        if colour == "random":
+            self.colour = (np.random.randint(255), np.random.randint(255), np.random.randint(255))
+        else:
+            self.colour = colour
         
         # outward facing normal
         self.normal = normal
@@ -478,17 +481,17 @@ class Game:
             '''lighting'''
             # dot product surface normal with light direction
             # [-1, 1]
-            #shade = -np.dot(self.light, triangle.normal)
+            shade = -np.dot(self.light, triangle.normal)
             # [0, 2]
-            #shade += 1
+            shade += 1
             # [0, 255]
-            #colour = int(shade * 127.5)
-            #if colour < 0:
-            #    colour = 0
-            #elif colour > 255:
-            #    colour = 255
+            colour = int(shade * 127.5)
+            if colour < 0:
+                colour = 0
+            elif colour > 255:
+                colour = 255
             # greyscale
-            #triangle.colour = (colour, colour, colour)
+            triangle.colour = (colour, colour, colour)
 
 
             pygame.gfxdraw.filled_trigon(
@@ -511,77 +514,60 @@ class Game:
 
 
     def load(self):
-        '''Populate scene'''
-        #self.model_list = [
-        #    Cube(
-        #        scale = 1,
-        #        rotation = (np.random.uniform(0, np.pi), np.random.uniform(0, np.pi), np.random.uniform(0, np.pi)),
-        #        translation=np.array([float(5*x), float(5*y), float(5*z)])
-        #    )
-        #for x in range(-2, 2) for y in range(-2, 2) for z in range(-2, 2)]
+        '''Populate the scene with objects'''
 
-        obj = Obj("Rasterizer/Models/point_cloud.obj", scale=10)
-        print(obj.bounding_radius)
+        
+        # Load a spaced 3D grid of cubes
+
+        self.model_list = [
+            Cube(
+                scale = 1,
+                rotation = (np.random.uniform(0, np.pi), np.random.uniform(0, np.pi), np.random.uniform(0, np.pi)),
+                translation=np.array([float(5*x), float(5*y), float(5*z)]),
+                colour = "random"
+            )
+        for x in range(-2, 2) for y in range(-2, 2) for z in range(-2, 2)]
+
+
+        '''
+        # Load model from an obj file
+
+        obj = Obj("Rasterizer/Models/teapot.obj", scale=1)
         self.model_list = [obj]
-
-        #self.model_list = []
-
-        # read file
-        #file = pd.read_csv("Rasterizer/scan_data_20230526100037.csv")
-        #file = file.dropna()
-
-        # extract min and max values
-        #min_lat = file['latitude'].min()
-        #max_lat = file['latitude'].max()
-
-        #min_long = file['longtitude'].min()
-        #max_long = file['longtitude'].max()
-
-        #min_depth = file['depth'].min()
-        #max_depth = file['depth'].max()
-
-        # loop over points
-        #for index, row in file.iterrows():
-
-            # normalize points
-        #    x = 10 * (row['latitude'] - min_lat) / (max_lat - min_lat)
-        #    y = 10 * (row['depth'] - min_depth) / (max_depth - min_depth)
-        #    z = 10 * (row['longtitude'] - min_long) / (max_long - min_long)
-
-            # shade by depth
-        #    shade = int(z * 255)# int((z + 1) * 127.5)
-        #    if shade > 255:
-        #        shade = 255
-        #    elif shade < 0:
-        #        shade = 0
-
-            # cube at each point
-        #    self.model_list.append(Cube(translation=[x, y, z], scale=0.01, colour=(0, 0, shade)))
+        '''
+      
+        '''
+        # Load a grid of triangles that follow a specified heightmap
 
         # squares per side of grid
-        #M = 50
-        #N = 50
+        M = 10
+        N = 10
         # squares per model
-        #K = 5
+        K = 2
         # units per square
-        #S = 1
+        S = 1
 
-        #self.model_list = []
-        #full_height_map = np.random.uniform(size=(M + 1, N + 1))
-        #for i in range(0, M - K + 1, K):
-        #    for j in range(0, N - K + 1, K):
-        #        self.model_list.append(
-        #            Plane(height_map=full_height_map[i:i+1+K, j:j+1+K], height_map_type="input", m=K, n=K, scale=S, translation=np.array([i*S, 0.0, j*S]))
-        #        )
+        self.model_list = []
+
+        # heightmap of plane
+        full_height_map = np.random.uniform(size=(M + 1, N + 1))
+
+        # construct plane
+        for i in range(0, M - K + 1, K):
+            for j in range(0, N - K + 1, K):
+                self.model_list.append(
+                    Plane(height_map=full_height_map[i:i+1+K, j:j+1+K], height_map_type="input", m=K, n=K, scale=S, translation=np.array([i*S, 0.0, j*S]))
+                )
+        '''
 
     
     def update(self):
         pass
-        #for model in self.model_list:
-
-            # rotate
-        #    model.rotation_transform((0.001 * self.dt, 0.001 * self.dt, 0.001 * self.dt))
-
+        '''
+        # Rotate all models per frame
+        for model in self.model_list:
+            model.rotation_transform((0.001 * self.dt, 0.001 * self.dt, 0.001 * self.dt))
+        '''
 
     def run(self):
         
@@ -608,7 +594,7 @@ class Game:
 
 @profile
 def main():
-    game = Game(window_width=1500, window_height=750, canvas_width=1500, canvas_height=750, view_width=6, view_height=3)
+    game = Game(window_width=700, window_height=700, canvas_width=700, canvas_height=700, view_width=3, view_height=3)
     game.run()
 
 if __name__ == "__main__":
