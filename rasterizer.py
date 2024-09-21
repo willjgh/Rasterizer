@@ -5,6 +5,7 @@ import numpy as np
 import pygame.gfxdraw
 from profilehooks import profile
 import pandas as pd
+import copy
 
 
 class Triangle:
@@ -15,6 +16,9 @@ class Triangle:
         self.i = i
         self.j = j
         self.k = k
+
+        # vertices: stored after camera computation
+        self.vertices = None
 
         # screen space coordinates: stored after all computation, before drawing
         self.screen_coordinates = None
@@ -282,6 +286,10 @@ class Game:
             'r4': np.array([-np.sin(angle_2), 0.0, -np.cos(angle_2)]),
             'r5': np.array([0.0, 0.0, -1.0]),
             'r6': np.array([0.0, 0.0, 1.0]),
+            'k1': 0.0,
+            'k2': 0.0,
+            'k3': 0.0,
+            'k4': 0.0,
             'k5': -self.d,
             'k6': self.D
         }
@@ -400,6 +408,19 @@ class Game:
         # 'flashlight' lighting
         # self.light = self.camera_direction
 
+    
+    def plane_intersection(self, A, B):
+        '''
+        Compute intersection point of the line AB and plane
+
+        A: tuple (point, distance to plane)
+        B: tuple (point, distance to plane)
+        '''
+        # t = dA / (dA - dB)
+        t = A[1] / (A[1] - B[1])
+        # B' = A + (B - A)t
+        return A[0] + (B[0] - A[0])*t
+
 
     def render(self):
 
@@ -415,19 +436,11 @@ class Game:
             '''bounding spheres'''
             # transform centre point to view space: inverse of camera matrix transform
             centre = self.camera_matrix.T @ (model.bounding_centre - self.camera_position)
-            # clip to planes: discard if failure
-            if np.dot(centre, self.view_normals['r1']) > model.bounding_radius:
-                continue
-            if np.dot(centre, self.view_normals['r2']) > model.bounding_radius:
-                continue
-            if np.dot(centre, self.view_normals['r3']) > model.bounding_radius:
-                continue
-            if np.dot(centre, self.view_normals['r4']) > model.bounding_radius:
-                continue
-            if np.dot(centre, self.view_normals['r5']) > model.bounding_radius + self.view_normals['k5']:
-                continue
-            if np.dot(centre, self.view_normals['r6']) > model.bounding_radius + self.view_normals['k6']:
-                continue
+            # comapre to each view plane in turn
+            for plane in range(1, 7):
+                # bounding sphere outside plane: discard model
+                if np.dot(centre, self.view_normals[f'r{plane}']) > model.bounding_radius + self.view_normals[f'k{plane}']:
+                    continue
                 
             '''camera transform'''
             # first translate by camera position
@@ -443,37 +456,143 @@ class Game:
                 if np.dot(triangle.normal, model.world_points[triangle.i, :] - self.camera_position) > 0:
                     continue
 
-                '''clipping'''
-                # extract vertex information
-                A = model.camera_points[triangle.i, :]
-                B = model.camera_points[triangle.j, :]
-                C = model.camera_points[triangle.k, :]
-
-                if A[2] < self.d or B[2] < self.d or C[2] < self.d:
-                    continue
+                # if visible: extract and store vertex information on triangle
                 else:
+                    # vertices
+                    A = model.camera_points[triangle.i, :]
+                    B = model.camera_points[triangle.j, :]
+                    C = model.camera_points[triangle.k, :]
 
-                    '''projection'''
-                    # screen space coordinates
-                    ax = self.canvas_width * (1/2 + ((self.d * A[0]) / (A[2] * self.view_width)))
-                    ay = self.canvas_height * (1/2 - ((self.d * A[1]) / (A[2] * self.view_height)))
-                    bx = self.canvas_width * (1/2 + ((self.d * B[0]) / (B[2] * self.view_width)))
-                    by = self.canvas_height * (1/2 - ((self.d * B[1]) / (B[2] * self.view_height)))
-                    cx = self.canvas_width * (1/2 + ((self.d * C[0]) / (C[2] * self.view_width)))
-                    cy = self.canvas_height * (1/2 - ((self.d * C[1]) / (C[2] * self.view_height)))
-                    
                     # store
-                    triangle.screen_coordinates = {'ax': int(ax), 'ay': int(ay), 'bx': int(bx), 'by': int(by), 'cx': int(cx), 'cy': int(cy)}
+                    triangle.vertices = [A, B, C]
 
-                    # compute average depth: used for drawing order
-                    triangle.average_depth = (A[2] + B[2] + C[2]) / 3
-
-                    # add to triangles to be drawn
+                    # add to drawing list
                     self.drawing_triangles.append(triangle)
+
+
+        '''clipping'''
+        # copy of triangle to draw list
+        self.drawing_triangles_new = []
+
+        # planes to clip to
+        clipping_planes = [1, 2, 3, 4, 5, 6]
+        # clipping_planes = [5]
+
+        # clip to each view plane in turn
+        for plane in clipping_planes:
+
+            # loop over triangles to be drawn
+            for triangle in self.drawing_triangles:
+
+                # points inside / outside plane
+                inside_points = []
+                outside_points = []
+                inside_point_number = 0
+
+                # compute distance of vertices to plane
+                for v in triangle.vertices:
+                    dv = np.dot(v, self.view_normals[f'r{plane}']) - self.view_normals[f'k{plane}']
+
+                    # store status of vertices: inside / outside plane
+                    if dv > 0:
+                        outside_points.append((v, dv))
+                    else:
+                        inside_points.append((v, dv))
+                        inside_point_number += 1
+
+
+                # all vertices outside plane
+                if inside_point_number == 0:
+
+                    # do not add to new list
+                    continue
+
+                # all vertices inside plane
+                elif inside_point_number == 3:
+                    
+                    # add to new list
+                    self.drawing_triangles_new.append(triangle)
+
+                # one vertex inside
+                elif inside_point_number == 1:
+
+                    # extract vertices
+                    A = inside_points[0]
+                    B = outside_points[0]
+                    C = outside_points[1]
+
+                    # compute new vertices
+                    B_prime = self.plane_intersection(A, B)
+                    C_prime = self.plane_intersection(A, C)
+
+                    # update triangle vertices (clip)
+                    triangle.vertices = [A[0], B_prime, C_prime]
+
+                    ''' testing: red for 1 clipped triangle '''
+                    # triangle.colour = (255, 0, 0)
+
+                    # add to new list
+                    self.drawing_triangles_new.append(triangle)
+
+                # two vertices inside: clip
+                elif inside_point_number == 2:
+                    
+                    # extract vertices
+                    A = outside_points[0]
+                    B = inside_points[0]
+                    C = inside_points[1]
+
+                    # compute new vertices
+                    B_prime = self.plane_intersection(A, B)
+                    C_prime = self.plane_intersection(A, C)
+
+                    # create a copy of triangle
+                    triangle_copy = copy.deepcopy(triangle)
+
+                    # update vertices of both (clipping)
+                    triangle.vertices = [B_prime, B[0], C[0]]
+                    triangle_copy.vertices = [B_prime, C[0], C_prime]
+
+                    ''' testing: green, blue for 2 clipped triangles'''
+                    # triangle.colour = (0, 255, 0)
+                    # triangle_copy.colour = (0, 0, 255)
+
+                    # add both triangles to new list
+                    self.drawing_triangles_new.append(triangle)
+                    self.drawing_triangles_new.append(triangle_copy)
+                
+            # update drawing lists
+            self.drawing_triangles = self.drawing_triangles_new
+            self.drawing_triangles_new = []
+
+
+        '''projection'''
+        for triangle in self.drawing_triangles:
+
+            # extract vertices
+            A = triangle.vertices[0]
+            B = triangle.vertices[1]
+            C = triangle.vertices[2]
+
+            # screen space coordinates
+            ax = self.canvas_width * (1/2 + ((self.d * A[0]) / (A[2] * self.view_width)))
+            ay = self.canvas_height * (1/2 - ((self.d * A[1]) / (A[2] * self.view_height)))
+            bx = self.canvas_width * (1/2 + ((self.d * B[0]) / (B[2] * self.view_width)))
+            by = self.canvas_height * (1/2 - ((self.d * B[1]) / (B[2] * self.view_height)))
+            cx = self.canvas_width * (1/2 + ((self.d * C[0]) / (C[2] * self.view_width)))
+            cy = self.canvas_height * (1/2 - ((self.d * C[1]) / (C[2] * self.view_height)))
+            
+            # store
+            triangle.screen_coordinates = {'ax': int(ax), 'ay': int(ay), 'bx': int(bx), 'by': int(by), 'cx': int(cx), 'cy': int(cy)}
+
+            # compute average depth: used for drawing order
+            triangle.average_depth = (A[2] + B[2] + C[2]) / 3
+
 
         '''drawing order'''
         # sort triangles to be draw by decreasing average depth
         self.drawing_triangles.sort(key=lambda tri: tri.average_depth, reverse=True)
+
 
         '''drawing'''
         for triangle in self.drawing_triangles:
@@ -481,19 +600,19 @@ class Game:
             '''lighting'''
             # dot product surface normal with light direction
             # [-1, 1]
-            shade = -np.dot(self.light, triangle.normal)
+            #shade = -np.dot(self.light, triangle.normal)
             # [0, 2]
-            shade += 1
+            #shade += 1
             # [0, 255]
-            colour = int(shade * 127.5)
-            if colour < 0:
-                colour = 0
-            elif colour > 255:
-                colour = 255
+            #colour = int(shade * 127.5)
+            #if colour < 0:
+            #    colour = 0
+            #elif colour > 255:
+            #    colour = 255
             # greyscale
-            triangle.colour = (colour, colour, colour)
+            #triangle.colour = (colour, colour, colour)
 
-
+            # draw
             pygame.gfxdraw.filled_trigon(
                 self.canvas,
                 triangle.screen_coordinates['ax'],
@@ -503,6 +622,9 @@ class Game:
                 triangle.screen_coordinates['cx'],
                 triangle.screen_coordinates['cy'],
                 triangle.colour)
+
+            ''' reset colour for testing '''
+            # triangle.colour = (255, 255, 255)
 
 
         # blit surface to window
@@ -515,8 +637,6 @@ class Game:
 
     def load(self):
         '''Populate the scene with objects'''
-
-        
         # Load a spaced 3D grid of cubes
 
         self.model_list = [
@@ -527,7 +647,6 @@ class Game:
                 colour = "random"
             )
         for x in range(-2, 2) for y in range(-2, 2) for z in range(-2, 2)]
-
 
         '''
         # Load model from an obj file
