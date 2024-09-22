@@ -215,7 +215,7 @@ class Plane(Model):
 
 class Obj(Model):
     '''object from .obj file'''
-    def __init__(self, filename, scale=1, rotation=(0, 0, 0), translation=np.array([0.0, 0.0, 0.0])):
+    def __init__(self, filename, scale=1, rotation=(0, 0, 0), translation=np.array([0.0, 0.0, 0.0]), colour=(255, 255, 255)):
 
         # model data
         model_points = []
@@ -238,7 +238,7 @@ class Obj(Model):
                 i = int(data[1]) - 1
                 j = int(data[2]) - 1
                 k = int(data[3]) - 1
-                model_triangles.append(Triangle(i, j, k))
+                model_triangles.append(Triangle(i, j, k, colour=colour))
 
         # convert to array
         model_points = np.array(model_points)
@@ -322,6 +322,9 @@ class Game:
             'k5': -self.d,
             'k6': self.D
         }
+
+        # depth buffer
+        self.depth_buffer = np.zeros((canvas_height + 1, canvas_width + 1))
 
         # lighting
         self.light = np.array([0.0, 0.0, 1.0])
@@ -481,6 +484,11 @@ class Game:
         # clear triangles to draw list
         self.drawing_triangles = []
 
+        pygame.gfxdraw.pixel(self.canvas, 0, 0, (255, 255, 255))
+
+        # clear depth buffer
+        self.depth_buffer = np.zeros((self.canvas_height + 1, self.canvas_width + 1))
+
         # draw background
         self.canvas.fill((0, 0, 0))
 
@@ -635,12 +643,17 @@ class Game:
             by = self.canvas_height * (1/2 - ((self.d * B[1]) / (B[2] * self.view_height)))
             cx = self.canvas_width * (1/2 + ((self.d * C[0]) / (C[2] * self.view_width)))
             cy = self.canvas_height * (1/2 - ((self.d * C[1]) / (C[2] * self.view_height)))
+
+            # reciprocal depth values
+            az = 1 / A[2]
+            bz = 1 / B[2]
+            cz = 1 / C[2]
             
             # store
             triangle.screen_coordinates = [
-                {'x': int(ax), 'y': int(ay)},
-                {'x': int(bx), 'y': int(by)},
-                {'x': int(cx), 'y': int(cy)}
+                {'x': int(ax), 'y': int(ay), 'z': az},
+                {'x': int(bx), 'y': int(by), 'z': bz},
+                {'x': int(cx), 'y': int(cy), 'z': cz}
             ]
             # {'ax': int(ax), 'ay': int(ay), 'bx': int(bx), 'by': int(by), 'cx': int(cx), 'cy': int(cy)}
 
@@ -651,17 +664,17 @@ class Game:
             '''lighting'''
             # dot product surface normal with light direction
             # [-1, 1]
-            #shade = -np.dot(self.light, triangle.normal)
+            shade = -np.dot(self.light, triangle.normal)
             # [0, 2]
-            #shade += 1
+            shade += 1
             # [0, 255]
-            #colour = int(shade * 127.5)
-            #if colour < 0:
-            #    colour = 0
-            #elif colour > 255:
-            #    colour = 255
+            colour = int(shade * 127.5)
+            if colour < 0:
+                colour = 0
+            elif colour > 255:
+                colour = 255
             # greyscale
-            #triangle.colour = (colour, colour, colour)
+            triangle.colour = (colour, colour, colour)
 
             '''pixel drawing'''
             # screen space vertices of triangle
@@ -680,41 +693,83 @@ class Game:
                 # AB line
                 m_ab = (B['x'] - A['x']) / (B['y'] - A['y'])
                 x_ab = A['x']
+                mz_ab = (B['z'] - A['z']) / (B['y'] - A['y'])   
+                z_ab = A['z']
 
                 # AC line (to level of B)
                 m_ac = (C['x'] - A['x']) / (C['y'] - A['y'])
                 x_ac = A['x']
+                mz_ac = (C['z'] - A['z']) / (C['y'] - A['y'])   
+                z_ac = A['z']
 
                 # left and right edge starting x values and gradients
                 m_left = 0
                 x_left = 0
+                mz_left = 0
+                z_left = 0
+
                 m_right = 0
                 x_right = 0
+                mz_right = 0
+                z_right = 0
                 
                 # set left and right sides
                 if m_ab < m_ac:
                     m_left = m_ab
                     x_left = x_ab
+                    mz_left = mz_ab
+                    z_left = z_ab
+
                     m_right = m_ac
                     x_right = x_ac
+                    mz_right = mz_ac
+                    z_right = z_ac
+
                 else:
                     m_left = m_ac
                     x_left = x_ac
+                    mz_left = mz_ac
+                    z_left = z_ac
+
                     m_right = m_ab
                     x_right = x_ab
+                    mz_right = mz_ab
+                    z_right = z_ab
 
                 # loop over y rows
                 for y in range(A['y'], B['y'] + 1):
 
+                    # z (reciprocal) start value
+                    z = z_left
+
+                    # z gradient across row (if not a single pixel)
+                    if x_left == x_right:
+                        mz = 0
+                    else:
+                        mz = (z_right - z_left) / (x_right - x_left)
+
                     # loop over x across row
                     for x in range(int(x_left), int(x_right) + 1):
 
-                        # draw pixel
-                        pygame.gfxdraw.pixel(self.canvas, x, y, triangle.colour)
+                        # check depth buffer
+                        if self.depth_buffer[x, y] < z:
+
+                            # draw pixel
+                            pygame.gfxdraw.pixel(self.canvas, x, y, triangle.colour)
+
+                            # update buffer
+                            self.depth_buffer[x, y] = z
+
+                        # increment z
+                        z += mz
 
                     # increment x_left and x_right values
                     x_left += m_left
                     x_right += m_right
+
+                    # increment z_left and z_right values
+                    z_left += mz_left
+                    z_right += mz_right
 
             # draw bottom triangle if not flat edge
             if C['y'] - B['y'] > 0:
@@ -722,41 +777,82 @@ class Game:
                 # BC line
                 m_bc = (B['x'] - C['x']) / (B['y'] - C['y'])
                 x_bc = B['x']
+                mz_bc = (B['z'] - C['z']) / (B['y'] - C['y'])
+                z_bc = B['z']
 
                 # AC line (from level of B)
                 m_ac = (C['x'] - A['x']) / (C['y'] - A['y'])
                 x_ac = A['x'] + (B['y'] - A['y'])*m_ac
+                mz_ac = (C['z'] - A['z']) / (C['y'] - A['y'])
+                z_ac = A['z'] + (B['y'] - A['y'])*mz_ac
 
                 # left and right edge starting x values and gradients
                 m_left = 0
                 x_left = 0
+                mz_left = 0
+                z_left = 0
+
                 m_right = 0
                 x_right = 0
+                mz_right = 0
+                z_right = 0
                 
                 # set left and right sides
                 if x_bc < x_ac:
                     m_left = m_bc
                     x_left = x_bc
+                    mz_left = mz_bc
+                    z_left = z_bc
+
                     m_right = m_ac
                     x_right = x_ac
+                    mz_right = mz_ac
+                    z_right = z_ac
                 else:
                     m_left = m_ac
                     x_left = x_ac
+                    mz_left = mz_ac
+                    z_left = z_ac
+
                     m_right = m_bc
                     x_right = x_bc
+                    mz_right = mz_bc
+                    z_right = z_bc
 
                 # loop over y rows
                 for y in range(B['y'], C['y'] + 1):
 
+                    # z (reciprocal) start value
+                    z = z_left
+
+                    # z gradient across row (if not a single pixel)
+                    if x_left == x_right:
+                        mz = 0
+                    else:
+                        mz = (z_right - z_left) / (x_right - x_left)
+
                     # loop over x across row
                     for x in range(int(x_left), int(x_right) + 1):
 
-                        # draw pixel
-                        pygame.gfxdraw.pixel(self.canvas, x, y, triangle.colour)
+                        # check depth buffer
+                        if self.depth_buffer[x, y] < z:
+
+                            # draw pixel
+                            pygame.gfxdraw.pixel(self.canvas, x, y, triangle.colour)
+
+                            # update buffer
+                            self.depth_buffer[x, y] = z
+
+                        # increment z
+                        z += mz
 
                     # increment x_left and x_right values
                     x_left += m_left
                     x_right += m_right
+
+                    # increment z_left and z_right values
+                    z_left += mz_left
+                    z_right += mz_right
 
 
             '''reset colour for testing '''
@@ -779,7 +875,7 @@ class Game:
         self.model_list = [Cube(colour="random")]
         '''
 
-        
+        '''
         # Load a spaced 3D grid of cubes
 
         self.model_list = [
@@ -790,23 +886,23 @@ class Game:
                 colour = "random"
             )
         for x in range(-2, 2) for y in range(-2, 2) for z in range(-2, 2)]
-        
-
         '''
+
+        
         # Load model from an obj file
 
-        obj = Obj("Rasterizer/Models/teapot.obj", scale=1)
+        obj = Obj("Rasterizer/Models/cow.obj", scale=1, colour="random")
         self.model_list = [obj]
-        '''
+
       
         '''
         # Load a grid of triangles that follow a specified heightmap
 
         # squares per side of grid
-        M = 10
-        N = 10
+        M = 50
+        N = 50
         # squares per model
-        K = 2
+        K = 5
         # units per square
         S = 1
 
@@ -822,6 +918,7 @@ class Game:
                     Plane(height_map=full_height_map[i:i+1+K, j:j+1+K], height_map_type="input", m=K, n=K, scale=S, translation=np.array([i*S, 0.0, j*S]))
                 )
         '''
+        
 
     
     def update(self):
@@ -857,7 +954,7 @@ class Game:
 
 @profile
 def main():
-    game = Game(window_width=700, window_height=700, canvas_width=700, canvas_height=700, view_width=3, view_height=3)
+    game = Game(window_width=700, window_height=700, canvas_width=100, canvas_height=100, view_width=3, view_height=3)
     game.run()
 
 if __name__ == "__main__":
